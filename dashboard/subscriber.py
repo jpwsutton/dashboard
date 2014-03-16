@@ -63,7 +63,7 @@ def applyRules(msg):
     printText("Applying rules for topic: " + str(msg.topic),1 )
     post = {"topic": msg.topic,
             "message": msg.payload,
-            "time": datetime.datetime.utcnow()}
+            "time": datetime.utcnow()}
     return post
     
  
