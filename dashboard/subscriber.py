@@ -2,91 +2,120 @@
 import paho.mqtt.client as paho
 from pymongo import MongoClient
 from datetime import datetime
+import threading
+import Queue
 
-
-##############################
-#         Variables
-##############################
-debug = True 
-
-
-##############################
-#       Misc Functions
-##############################
+debug = False
 
 def printText(text, level):
-    now = datetime.strftime(datetime.now(),"%d/%m/%Y %H:%M:%S")
+    now = datetime.strftime(datetime.now(), "%d/%m/%Y %H:%M:%S")
     timeString = "[" + now + "] "
-    if(level is 1):
+    if (level is 1):
         if(debug):
             print(timeString + "DEBUG: " + text)
     else:
         print(timeString + "INFO: " + text)
 
-##############################
-#      MQTT Functions
-##############################
 
-def mqtt_initialise(host, topic):
-    mqttc = paho.Client()
-    mqttc.on_message = mqtt_on_message
-    mqttc.on_connect = mqtt_on_connect
-    mqttc.on_publish = mqtt_on_publish
-    mqttc.on_subscribe = mqtt_on_subscribe
-    mqttc.connect(host, 1883, 60)
-    mqttc.subscribe(topic, 0)
-    return mqttc
-	
-def mqtt_on_connect(mqttc, obj, rc):
-    printText("rc: " +str(rc),1)
+
+class mqttClient:
+    """
+    This class that manages the Main MQTT Subscriber thread
+    """
+
+    def __init__(self, host, topic):
+        self.host = host
+        self.topic = topic
+        self.incoming_queue = Queue.Queue()
+        self.command_queue = Queue.Queue()
+        self.thread = mqttThread(self.host, self.topic, 
+                self.incoming_queue, self.command_queue)
+        self.thread.setDaemon(False)
+        self.thread.start()
+        self.incoming_queue.join()
+        self.command_queue.join()
+
+    def stop_client(self):
+        """
+        Tells the mqttThread to stop
+        """
+        self.command_queue.put("stop")
+
+
+
+class mqttThread(threading.Thread):
+    """
+    This class is the main MQTT Subscriber thread
+    """
+
+    def __init__(self, host, topic, incoming_queue, command_queue):
+        """
+        Initializes the thread
+        """
+        threading.Thread.__init__(self)
+        self.host = host
+        self.topic = topic
+        self.incoming_queue = incoming_queue
+        self.command_queue = command_queue
+
+        self._mqttc = paho.Client()
+        self._mqttc.on_message = self.mqtt_on_message
+        self._mqttc.on_connect = self.mqtt_on_connect
+        self._mqttc.on_publish = self.mqtt_on_publish
+        self._mqttc.on_subscribe = self.mqtt_on_subscribe
+
+        # Mongo Stuff
+        self.mongo_client = MongoClient()
+        self.mongo_database = self.mongo_client.dashboard_database
+        self.mongo_collection = self.mongo_database.mqtt_collection
+        self.topic_collection = self.mongo_database.topic_collection
+
+        
+
+
+    def mqtt_on_connect(self, mqttc, obj, rc):
+        """MQTT PAHO Callback for on connect"""
+        pass
+
+    def apply_rules(self, msg):
+        printText("Applying rules for topic: " + str(msg.topic), 1)
+        post = {"topic": msg.topic,
+                "message": msg.payload,
+                "time": datetime.utcnow()}
+        return post
+
+    def mqtt_on_message(self, mqttc, obj, msg):
+        """MQTT PAHO Callback for message recieved"""
+        printText(msg.topic + " => " + str(msg.payload), 1)
+        post = self.apply_rules(msg)
+        printText("Inserting post: " + str(post), 1)
+        postId = self.mongo_collection.insert(post)
+        existing_topic = self.topic_collection.find_one({"topic": msg.topic})
+        if existing_topic is None:
+            self.topic_collection.insert({"topic": msg.topic})
+        
+
+    def mqtt_on_publish(self, mqttc, obj, mid):
+        """MQTT PAHO Callback for message published"""
+        pass
+
+    def mqtt_on_subscribe(self, mqttc, obj, mid, granted_qos):
+        """MQTT PAHO Callback for topic subscribed"""
+        pass
     
-def mqtt_on_message(mqttc, obj, msg):
-    printText(msg.topic + " => " + str(msg.payload), 0)
-    post = applyRules(msg)
-    printText("Inserting post: " + post['topic'], 1)
-    postId = mqttCollection.insert(post)
-    
-def mqtt_on_publish(mqttc, obj, mid):
-    printText("mid: " +str(mid),1)
 
-def mqtt_on_subscribe(mqttc, obj, mid, granted_qos):
-    printText("Subscribed to: " +str(mid)+" "+str(granted_qos),1)
-    
-def mqtt_on_log(mqttc, obj, level, string):
-    printText(string,1)
-    
-    
-##############################
-#        Rule Functions
-##############################
-def applyRules(msg):
-    printText("Applying rules for topic: " + str(msg.topic),1 )
-    post = {"topic": msg.topic,
-            "message": msg.payload,
-            "time": datetime.utcnow()}
-    return post
-    
- 
-##############################
-#       Cron Functions
-##############################
+    def run(self):
+        """
+        The main loop function that keeps this thread going
+        untill it is no longer required
+        """
+        self._mqttc.connect(self.host, 1883, 60)
+        self._mqttc.subscribe(self.topic, 0)
+        while True:
+            self._mqttc.loop()
 
-
-
-
-
-
-mqttc = mqtt_initialise("jsutton.co.uk", "/#")
-mongo = MongoClient()
-database = mongo.dashboard_database
-mqttCollection = database.mqtt_collection
-printText("Dashboard Subscription Service has started", 0)
-
-
-while True:
-    mqttc.loop()
-
-
-
-
-# vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
+            # Check command Queue
+            if(not self.command_queue.empty()):
+                command = self.command_queue.get()
+                if command == "stop":
+                    break
