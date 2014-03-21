@@ -78,7 +78,13 @@ class mqttThread(threading.Thread):
         pass
 
     def apply_rules(self, msg):
-        printText("Applying rules for topic: " + str(msg.topic), 1)
+        # Add to topics if this is a new topic
+        existing_topic = self.topic_collection.find_one({"topic": msg.topic})
+        if existing_topic is None:
+            self.topic_collection.insert({"topic": msg.topic})
+
+
+        # Prepare for Database
         post = {"topic": msg.topic,
                 "message": msg.payload,
                 "time": datetime.utcnow()}
@@ -86,13 +92,9 @@ class mqttThread(threading.Thread):
 
     def mqtt_on_message(self, mqttc, obj, msg):
         """MQTT PAHO Callback for message recieved"""
-        printText(msg.topic + " => " + str(msg.payload), 1)
         post = self.apply_rules(msg)
         printText("Inserting post: " + str(post), 1)
-        postId = self.mongo_collection.insert(post)
-        existing_topic = self.topic_collection.find_one({"topic": msg.topic})
-        if existing_topic is None:
-            self.topic_collection.insert({"topic": msg.topic})
+        postId = self.mongo_collection.update({'topic': msg.topic}, post, upsert=True)
         
 
     def mqtt_on_publish(self, mqttc, obj, mid):

@@ -1,7 +1,8 @@
 import subscriber
 import time
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, jsonify
 from pymongo import MongoClient
+import sys
 
 app = Flask(__name__)
 
@@ -18,12 +19,13 @@ app.config.update(dict(
 
 
 def shutdown_server():
+    myClient.stop_client()
+    time.sleep(2)
+    
     func = request.environ.get('werkzeug.server.shutdown')
     if func is None:
         raise RuntimeError('Not Running with the Werkzeug Server')
     func()
-    myClient.stop_client()
-    time.sleep(2)
     print("Goodbye!")
 
 @app.route("/shutdown", methods=['GET', 'POST'])
@@ -46,9 +48,22 @@ def list_topics():
 
 @app.route("/<path:topic>")
 def catch_topic(topic):
-    return "You are looking at: %s" % topic
+    topic_path = "/" + topic
+    topic_count = mqtt_collection.find({'topic' : topic_path}).count()
+
+    return "You are looking at: %s, there are %s entries." % (topic_path, topic_count) 
+
+@app.route("/json/<path:topic>")
+def json_topic(topic):
+    topic_path = "/" +topic
+    entry = mqtt_collection.find_one({'topic': topic_path})
+    return jsonify(topic=entry['topic'],
+                   message=entry['message'],
+                   time=entry['time'])
 
 
 
 if __name__ == "__main__":
     app.run()
+    print("Goodbye")
+    sys.exit()

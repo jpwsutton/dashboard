@@ -2,13 +2,16 @@
 
 
 <div class=page>
+        
         <ul class=topics>
                 {% for topic in topic_list %}
-                <li><h2>{{topic }}</h2>
+                <li><a href="/json{{topic }}">{{topic}}</a>
                 {% else %}
                 <li><em>Unbelievable, no topics to show!</em>
                 {% endfor %}
         </ul>
+
+
 
 </div>
 
