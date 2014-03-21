@@ -36,7 +36,7 @@ def shutdown():
 
 @app.route("/")
 def hello():
-    return "Hello World!"
+    return render_template('index.html')
 
 @app.route("/topics")
 def list_topics():
